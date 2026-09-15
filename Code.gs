@@ -1,5 +1,6 @@
 const SHEET_ROSTER = 'QR用名簿';
 const SHEET_LOG = '提出履歴';
+const SHEET_SUMMARY = '児童集計';
 const VALID_TYPES = ['A', 'B', 'C', 'D'];
 
 
@@ -15,8 +16,6 @@ function doPost(e) {
       e.postData.contents || '{}'
     );
 
-
-    // ---------- 管理キー確認 ----------
 
     const correctKey =
       PropertiesService
@@ -38,14 +37,12 @@ function doPost(e) {
     }
 
 
-    // ---------- 提出登録 ----------
-
-    const result = registerSubmission(
-      data.studentId,
-      data.submissionType
+    return jsonResponse(
+      registerSubmission(
+        data.studentId,
+        data.submissionType
+      )
     );
-
-    return jsonResponse(result);
 
   }
 
@@ -94,6 +91,9 @@ function jsonResponse(data) {
 
 // ==================================================
 // 提出登録
+//
+// 通常の登録では、提出履歴全体を読みません。
+// 「児童集計」の該当する児童1人の行だけを確認します。
 // ==================================================
 
 function registerSubmission(
@@ -120,9 +120,7 @@ function registerSubmission(
   }
 
 
-  if (
-    !VALID_TYPES.includes(submissionType)
-  ) {
+  if (!VALID_TYPES.includes(submissionType)) {
 
     return {
       ok: false,
@@ -132,8 +130,6 @@ function registerSubmission(
   }
 
 
-  // 先生2人がほぼ同時に登録しても
-  // 二重記録されにくくする
   const lock =
     LockService.getScriptLock();
 
@@ -151,13 +147,15 @@ function registerSubmission(
     const logSheet =
       ss.getSheetByName(SHEET_LOG);
 
+    const summarySheet =
+      ss.getSheetByName(SHEET_SUMMARY);
+
 
     if (!rosterSheet) {
 
       return {
         ok: false,
-        message:
-          'QR用名簿シートが見つかりません。'
+        message: 'QR用名簿シートが見つかりません。'
       };
 
     }
@@ -167,47 +165,37 @@ function registerSubmission(
 
       return {
         ok: false,
-        message:
-          '提出履歴シートが見つかりません。'
+        message: '提出履歴シートが見つかりません。'
       };
 
     }
 
 
-    // ==================================================
-    // 名簿
-    //
-    // A 生徒ID
-    // B クラス
-    // C 出席番号
-    // D 氏名
-    // ==================================================
+    if (!summarySheet) {
 
-    const lastRosterRow =
-      rosterSheet.getLastRow();
+      return {
+        ok: false,
+        message:
+          '児童集計シートが見つかりません。'
+      };
+
+    }
 
 
-    const roster =
-      rosterSheet
-        .getRange(
-          2,
-          1,
-          lastRosterRow - 1,
-          4
-        )
-        .getValues();
+    const rosterRow =
+      findStudentRow(
+        rosterSheet,
+        studentId
+      );
 
-
-    const student =
-      roster.find(row =>
-
-        String(row[0]).trim()
-          === studentId
-
+    const summaryRow =
+      findStudentRow(
+        summarySheet,
+        studentId
       );
 
 
-    if (!student) {
+    if (!rosterRow) {
 
       return {
         ok: false,
@@ -218,22 +206,51 @@ function registerSubmission(
     }
 
 
+    if (!summaryRow) {
+
+      return {
+        ok: false,
+        message:
+          '児童集計にこの児童がいません。'
+      };
+
+    }
+
+
+    const student =
+      rosterSheet
+        .getRange(
+          rosterRow,
+          1,
+          1,
+          4
+        )
+        .getValues()[0];
+
     const id = student[0];
     const className = student[1];
     const number = student[2];
     const name = student[3];
 
 
-    // ==================================================
-    // 日付
-    // ==================================================
+    const summary =
+      summarySheet
+        .getRange(
+          summaryRow,
+          1,
+          1,
+          12
+        )
+        .getValues()[0];
+
+    const columns =
+      summaryColumns(submissionType);
 
     const now = new Date();
 
     const tz =
       ss.getSpreadsheetTimeZone()
       || 'America/Los_Angeles';
-
 
     const todayKey =
       Utilities.formatDate(
@@ -242,148 +259,74 @@ function registerSubmission(
         'yyyy-MM-dd'
       );
 
+    const lastDate =
+      dateToKey(
+        summary[columns.lastDateIndex],
+        tz
+      );
 
-    // ==================================================
+
     // 同じ日＋同じ生徒＋同じ提出物
     // の二重登録を防ぐ
-    // ==================================================
+    if (lastDate === todayKey) {
 
-    const lastLogRow =
-      logSheet.getLastRow();
+      return {
 
+        ok: false,
 
-    if (lastLogRow >= 2) {
+        duplicate: true,
 
-      const logs =
-        logSheet
-          .getRange(
-            2,
-            1,
-            lastLogRow - 1,
-            6
-          )
-          .getValues();
+        name: name,
 
+        className: className,
 
-      const duplicated =
-        logs.some(row => {
+        number: number,
 
-          const rowDate = row[1];
+        submissionType:
+          submissionType,
 
-          const rowId =
-            String(row[2]).trim();
+        message:
+          `${name}さんは今日すでに提出物${submissionType}を登録済みです。`
 
-          const rowType =
-            String(row[5])
-              .trim()
-              .toUpperCase();
-
-
-          let rowDateKey = '';
-
-
-          if (
-            rowDate instanceof Date
-            && !isNaN(rowDate)
-          ) {
-
-            rowDateKey =
-              Utilities.formatDate(
-                rowDate,
-                tz,
-                'yyyy-MM-dd'
-              );
-
-          }
-
-
-          return (
-            rowDateKey === todayKey
-            &&
-            rowId === studentId
-            &&
-            rowType === submissionType
-          );
-
-        });
-
-
-      if (duplicated) {
-
-        return {
-
-          ok: false,
-
-          duplicate: true,
-
-          name: name,
-
-          className: className,
-
-          number: number,
-
-          submissionType:
-            submissionType,
-
-          message:
-            `${name}さんは今日すでに提出物${submissionType}を登録済みです。`
-
-        };
-
-      }
+      };
 
     }
 
 
-    // ==================================================
-    // 提出履歴へ追加
-    // ==================================================
-
+    // 正式な提出履歴は、従来どおり全件残す
     logSheet.appendRow([
 
-      now,              // タイムスタンプ
-      now,              // 日付
-      id,               // 生徒ID
-      name,             // 氏名
-      className,        // クラス
-      submissionType    // A〜D
+      now,
+      now,
+      id,
+      name,
+      className,
+      submissionType
 
     ]);
 
 
-    // ==================================================
-    // この生徒の、この提出物の累計回数
-    // ==================================================
+    // 受付用の小さな集計表だけを更新する
+    const oldCount =
+      Number(summary[columns.countIndex])
+      || 0;
 
-    const newLastRow =
-      logSheet.getLastRow();
+    const newCount =
+      oldCount + 1;
 
-
-    const allLogs =
-      logSheet
-        .getRange(
-          2,
-          1,
-          newLastRow - 1,
-          6
-        )
-        .getValues();
-
-
-    const count =
-      allLogs.filter(row =>
-
-        String(row[2]).trim()
-          === studentId
-
-        &&
-
-        String(row[5])
-          .trim()
-          .toUpperCase()
-          === submissionType
-
-      ).length;
+    summarySheet
+      .getRange(
+        summaryRow,
+        columns.countIndex + 1,
+        1,
+        2
+      )
+      .setValues([
+        [
+          newCount,
+          todayKey
+        ]
+      ]);
 
 
     return {
@@ -401,7 +344,7 @@ function registerSubmission(
       submissionType:
         submissionType,
 
-      count: count,
+      count: newCount,
 
       date:
         Utilities.formatDate(
@@ -412,7 +355,6 @@ function registerSubmission(
 
     };
 
-
   }
 
   finally {
@@ -420,5 +362,300 @@ function registerSubmission(
     lock.releaseLock();
 
   }
+
+}
+
+
+// ==================================================
+// 「児童集計」の列位置
+// ==================================================
+
+function summaryColumns(submissionType) {
+
+  const typeIndex =
+    VALID_TYPES.indexOf(
+      submissionType
+    );
+
+  return {
+
+    // A〜D は名簿情報。
+    // E/F, G/H, I/J, K/L が
+    // 各提出物の「回数 / 最終日」。
+    countIndex:
+      4 + typeIndex * 2,
+
+    lastDateIndex:
+      5 + typeIndex * 2
+
+  };
+
+}
+
+
+// ==================================================
+// 指定した生徒IDの行を探す
+// ==================================================
+
+function findStudentRow(
+  sheet,
+  studentId
+) {
+
+  const lastRow =
+    sheet.getLastRow();
+
+  if (lastRow < 2) {
+
+    return 0;
+
+  }
+
+
+  const cell =
+    sheet
+      .getRange(
+        2,
+        1,
+        lastRow - 1,
+        1
+      )
+      .createTextFinder(
+        studentId
+      )
+      .matchEntireCell(true)
+      .findNext();
+
+
+  return cell
+    ? cell.getRow()
+    : 0;
+
+}
+
+
+// ==================================================
+// 日付を yyyy-MM-dd の文字列へそろえる
+// ==================================================
+
+function dateToKey(
+  value,
+  timezone
+) {
+
+  if (
+    value instanceof Date
+    && !isNaN(value)
+  ) {
+
+    return Utilities.formatDate(
+      value,
+      timezone,
+      'yyyy-MM-dd'
+    );
+
+  }
+
+  return String(value || '').trim();
+
+}
+
+
+// ==================================================
+// 管理者用：名簿や過去の履歴から
+// 「児童集計」を作り直す
+//
+// 新しい児童を名簿へ追加した後などに、
+// Apps Script エディタから手動で実行します。
+// 通常のQR登録では実行されません。
+// ==================================================
+
+function rebuildSummarySheet() {
+
+  const ss =
+    SpreadsheetApp.getActiveSpreadsheet();
+
+  const rosterSheet =
+    ss.getSheetByName(SHEET_ROSTER);
+
+  const logSheet =
+    ss.getSheetByName(SHEET_LOG);
+
+
+  if (!rosterSheet || !logSheet) {
+
+    throw new Error(
+      'QR用名簿または提出履歴が見つかりません。'
+    );
+
+  }
+
+
+  let summarySheet =
+    ss.getSheetByName(SHEET_SUMMARY);
+
+  if (!summarySheet) {
+
+    summarySheet =
+      ss.insertSheet(SHEET_SUMMARY);
+
+  }
+
+
+  const rosterLastRow =
+    rosterSheet.getLastRow();
+
+  const roster =
+    rosterLastRow >= 2
+      ? rosterSheet
+          .getRange(
+            2,
+            1,
+            rosterLastRow - 1,
+            4
+          )
+          .getValues()
+      : [];
+
+
+  const summaryById = {};
+
+  roster.forEach(row => {
+
+    const id =
+      String(row[0] || '').trim();
+
+    if (!id) {
+      return;
+    }
+
+    summaryById[id] = {
+      roster: row,
+      counts: [0, 0, 0, 0],
+      lastDates: ['', '', '', '']
+    };
+
+  });
+
+
+  const logLastRow =
+    logSheet.getLastRow();
+
+  const logs =
+    logLastRow >= 2
+      ? logSheet
+          .getRange(
+            2,
+            1,
+            logLastRow - 1,
+            6
+          )
+          .getValues()
+      : [];
+
+  const tz =
+    ss.getSpreadsheetTimeZone()
+    || 'America/Los_Angeles';
+
+
+  logs.forEach(row => {
+
+    const id =
+      String(row[2] || '').trim();
+
+    const type =
+      String(row[5] || '')
+        .trim()
+        .toUpperCase();
+
+    const typeIndex =
+      VALID_TYPES.indexOf(type);
+
+    const item =
+      summaryById[id];
+
+    if (!item || typeIndex === -1) {
+      return;
+    }
+
+    item.counts[typeIndex] += 1;
+
+    const dateKey =
+      dateToKey(
+        row[1],
+        tz
+      );
+
+    if (
+      dateKey &&
+      (
+        !item.lastDates[typeIndex] ||
+        dateKey > item.lastDates[typeIndex]
+      )
+    ) {
+
+      item.lastDates[typeIndex] =
+        dateKey;
+
+    }
+
+  });
+
+
+  const header = [
+    '生徒ID',
+    'クラス',
+    '出席番号',
+    '氏名',
+    '視写 回数',
+    '視写 最終日',
+    '音読 回数',
+    '音読 最終日',
+    'ぴったりドリル 回数',
+    'ぴったりドリル 最終日',
+    '算数ドリル 回数',
+    '算数ドリル 最終日'
+  ];
+
+  const rows = [header];
+
+  roster.forEach(row => {
+
+    const id =
+      String(row[0] || '').trim();
+
+    const item =
+      summaryById[id];
+
+    rows.push([
+      row[0],
+      row[1],
+      row[2],
+      row[3],
+      item.counts[0],
+      item.lastDates[0],
+      item.counts[1],
+      item.lastDates[1],
+      item.counts[2],
+      item.lastDates[2],
+      item.counts[3],
+      item.lastDates[3]
+    ]);
+
+  });
+
+
+  summarySheet.clearContents();
+
+  summarySheet
+    .getRange(
+      1,
+      1,
+      rows.length,
+      header.length
+    )
+    .setValues(rows);
+
+  summarySheet.setFrozenRows(1);
 
 }
