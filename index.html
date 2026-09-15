@@ -216,7 +216,7 @@
 
     <div style="font-weight:bold;margin:14px 0 10px;">提出物を選択</div>
 
-    <div class="types">
+    <div class="types" id="submissionTypes">
 
       <button
         class="type active"
@@ -485,7 +485,7 @@ function showScanner() {
 // ==================================================
 
 document
-  .querySelectorAll('.type')
+  .querySelectorAll('#submissionTypes .type')
   .forEach(
     button => {
 
