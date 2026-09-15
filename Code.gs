@@ -1,6 +1,7 @@
 const SHEET_ROSTER = 'QR用名簿';
 const SHEET_LOG = '提出履歴';
 const SHEET_SUMMARY = '児童集計';
+const SHEET_ASSIGNMENTS = '提出回数管理';
 const VALID_TYPES = ['A', 'B', 'C', 'D'];
 
 
@@ -34,6 +35,13 @@ function doPost(e) {
         message: '管理キーが違います。'
       });
 
+    }
+
+
+    if (data.action === 'startSession') {
+      return jsonResponse(
+        startSession(data.className, data.submissionType, data.sessionId)
+      );
     }
 
 
@@ -85,6 +93,51 @@ function jsonResponse(data) {
     .setMimeType(
       ContentService.MimeType.JSON
     );
+
+}
+
+
+// ==================================================
+// 受付開始：提出機会を1回記録する
+// ==================================================
+
+function startSession(className, submissionType, sessionId) {
+
+  className = String(className || '').trim();
+  submissionType = String(submissionType || '').trim().toUpperCase();
+  sessionId = String(sessionId || '').trim();
+
+  if (!className || !VALID_TYPES.includes(submissionType) || !sessionId) {
+    return { ok: false, message: '受付開始の情報が不足しています。' };
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(SHEET_ASSIGNMENTS);
+
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEET_ASSIGNMENTS);
+      sheet.appendRow(['タイムスタンプ', '日付', 'クラス', '提出物', '受付ID']);
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      const ids = sheet.getRange(2, 5, lastRow - 1, 1).getValues();
+      if (ids.some(row => String(row[0]).trim() === sessionId)) {
+        return { ok: true, alreadyStarted: true };
+      }
+    }
+
+    const now = new Date();
+    sheet.appendRow([now, now, className, submissionType, sessionId]);
+    return { ok: true };
+
+  } finally {
+    lock.releaseLock();
+  }
 
 }
 
