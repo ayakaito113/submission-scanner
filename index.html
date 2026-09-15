@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width,
+             initial-scale=1,
+             viewport-fit=cover"
+  >
+
+  <title>提出物QR管理</title>
+
+
+  <script
+    src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
+  </script>
+
+
+  <style>
+
+    body {
+
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+
+      margin: 0;
+
+      background: #f5f6f8;
+
+      color: #202124;
+
+    }
+
+
+    .wrap {
+
+      max-width: 560px;
+
+      margin: auto;
+
+      padding: 16px;
+
+    }
+
+
+    h1 {
+
+      font-size: 24px;
+
+      margin: 4px 0 16px;
+
+    }
+
+
+    .card {
+
+      background: white;
+
+      border-radius: 14px;
+
+      padding: 16px;
+
+      margin-bottom: 14px;
+
+      box-shadow:
+        0 2px 10px
+        rgba(0,0,0,.07);
+
+    }
+
+
+    .types {
+
+      display: grid;
+
+      grid-template-columns:
+        repeat(4, 1fr);
+
+      gap: 8px;
+
+    }
+
+
+    .type {
+
+      padding: 15px 5px;
+
+      border-radius: 12px;
+
+      border:
+        2px solid #ddd;
+
+      background: white;
+
+      font-size: 22px;
+
+      font-weight: bold;
+
+    }
+
+
+    .type.active {
+
+      background: #e8f0fe;
+
+      border-color: #3367d6;
+
+      color: #174ea6;
+
+    }
+
+
+    button.main {
+
+      width: 100%;
+
+      border: none;
+
+      border-radius: 12px;
+
+      padding: 16px;
+
+      background: #3367d6;
+
+      color: white;
+
+      font-size: 18px;
+
+      font-weight: bold;
+
+    }
+
+
+    button.secondary {
+
+      width: 100%;
+
+      border: 1px solid #ddd;
+
+      border-radius: 10px;
+
+      padding: 10px;
+
+      margin-top: 10px;
+
+      background: white;
+
+      color: #555;
+
+    }
+
+
+    input {
+
+      box-sizing: border-box;
+
+      width: 100%;
+
+      padding: 14px;
+
+      border:
+
+        1px solid #bbb;
+
+      border-radius: 10px;
+
+      font-size: 16px;
+
+      margin-bottom: 10px;
+
+    }
+
+
+    #reader {
+
+      margin-top: 12px;
+
+      width: 100%;
+
+    }
+
+
+    #status {
+
+      font-size: 18px;
+
+      font-weight: bold;
+
+      white-space: pre-line;
+
+      line-height: 1.5;
+
+    }
+
+
+    .ok {
+
+      color: #137333;
+
+    }
+
+
+    .warn {
+
+      color: #b06000;
+
+    }
+
+
+    .error {
+
+      color: #b3261e;
+
+    }
+
+
+    .hidden {
+
+      display: none;
+
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+
+<div class="wrap">
+
+
+  <h1>
+    提出物QR管理
+  </h1>
+
+
+  <!-- ======================================
+       管理キー入力
+       ====================================== -->
+
+  <div
+    class="card"
+    id="keyCard"
+  >
+
+    <div
+      style="
+        font-weight:bold;
+        margin-bottom:10px;
+      "
+    >
+
+      🔐 管理キー
+
+    </div>
+
+
+    <input
+      type="password"
+      id="keyInput"
+      placeholder="管理キーを入力"
+    >
+
+
+    <button
+      class="main"
+      id="saveKey"
+    >
+
+      保存して開始
+
+    </button>
+
+  </div>
+
+
+
+  <!-- ======================================
+       提出物選択
+       ====================================== -->
+
+  <div
+    class="card hidden"
+    id="scannerArea"
+  >
+
+
+    <div
+      style="
+        font-weight:bold;
+        margin-bottom:10px;
+      "
+    >
+
+      提出物を選択
+
+    </div>
+
+
+    <div class="types">
+
+
+      <button
+        class="type active"
+        data-type="A"
+      >
+        A
+      </button>
+
+
+      <button
+        class="type"
+        data-type="B"
+      >
+        B
+      </button>
+
+
+      <button
+        class="type"
+        data-type="C"
+      >
+        C
+      </button>
+
+
+      <button
+        class="type"
+        data-type="D"
+      >
+        D
+      </button>
+
+
+    </div>
+
+
+  </div>
+
+
+
+  <!-- ======================================
+       カメラ
+       ====================================== -->
+
+  <div
+    class="card hidden"
+    id="cameraCard"
+  >
+
+
+    <button
+      class="main"
+      id="start"
+    >
+
+      📷 QRスキャン開始
+
+    </button>
+
+
+    <div id="reader"></div>
+
+
+  </div>
+
+
+
+  <!-- ======================================
+       結果
+       ====================================== -->
+
+  <div
+    class="card hidden"
+    id="statusCard"
+  >
+
+
+    <div id="status">
+
+      提出物を選んで
+      QRスキャンを開始してください。
+
+    </div>
+
+
+  </div>
+
+
+
+  <div
+    class="card hidden"
+    id="settingsCard"
+  >
+
+    <button
+      class="secondary"
+      id="forgetKey"
+    >
+
+      この端末の管理キーを削除
+
+    </button>
+
+  </div>
+
+
+</div>
+
+
+
+<script>
+
+
+// ==================================================
+// ★ここだけ自分のGAS URLに変更
+// ==================================================
+
+const GAS_URL =
+  'https://script.google.com/macros/s/AKfycbw7sdEXxDPwlx9KnL510wTAYsV9WZiab-14WEbiSHzBUsuaA905QomGp9bwCMgY4kNg/exec';
+
+
+// ==================================================
+
+let selectedType = 'A';
+
+let scanner = null;
+
+let started = false;
+
+let locked = false;
+
+let lastCode = '';
+
+let lastTime = 0;
+
+
+// ==================================================
+// 起動時
+// ==================================================
+
+window.addEventListener(
+  'DOMContentLoaded',
+  () => {
+
+
+    const savedKey =
+      localStorage.getItem(
+        'qrApiKey'
+      );
+
+
+    if (savedKey) {
+
+      showScanner();
+
+    }
+
+  }
+);
+
+
+// ==================================================
+// 管理キー保存
+// ==================================================
+
+document
+  .getElementById('saveKey')
+  .addEventListener(
+    'click',
+    () => {
+
+
+      const key =
+        document
+          .getElementById(
+            'keyInput'
+          )
+          .value
+          .trim();
+
+
+      if (!key) {
+
+        alert(
+          '管理キーを入力してください。'
+        );
+
+        return;
+
+      }
+
+
+      localStorage.setItem(
+        'qrApiKey',
+        key
+      );
+
+
+      showScanner();
+
+    }
+  );
+
+
+// ==================================================
+// 管理キー削除
+// ==================================================
+
+document
+  .getElementById('forgetKey')
+  .addEventListener(
+    'click',
+    () => {
+
+
+      localStorage.removeItem(
+        'qrApiKey'
+      );
+
+
+      location.reload();
+
+    }
+  );
+
+
+// ==================================================
+// スキャナー画面表示
+// ==================================================
+
+function showScanner() {
+
+
+  document
+    .getElementById('keyCard')
+    .classList.add(
+      'hidden'
+    );
+
+
+  document
+    .getElementById(
+      'scannerArea'
+    )
+    .classList.remove(
+      'hidden'
+    );
+
+
+  document
+    .getElementById(
+      'cameraCard'
+    )
+    .classList.remove(
+      'hidden'
+    );
+
+
+  document
+    .getElementById(
+      'statusCard'
+    )
+    .classList.remove(
+      'hidden'
+    );
+
+
+  document
+    .getElementById(
+      'settingsCard'
+    )
+    .classList.remove(
+      'hidden'
+    );
+
+}
+
+
+// ==================================================
+// A〜D選択
+// ==================================================
+
+document
+  .querySelectorAll('.type')
+  .forEach(
+    button => {
+
+
+      button.addEventListener(
+        'click',
+        () => {
+
+
+          document
+            .querySelectorAll(
+              '.type'
+            )
+            .forEach(
+              b =>
+                b.classList.remove(
+                  'active'
+                )
+            );
+
+
+          button
+            .classList.add(
+              'active'
+            );
+
+
+          selectedType =
+            button.dataset.type;
+
+
+          showStatus(
+            `提出物${selectedType}を選択中`,
+            ''
+          );
+
+        }
+      );
+
+    }
+  );
+
+
+// ==================================================
+// カメラ起動
+// ==================================================
+
+document
+  .getElementById('start')
+  .addEventListener(
+    'click',
+    async () => {
+
+
+      if (started) {
+
+        return;
+
+      }
+
+
+      try {
+
+
+        scanner =
+          new Html5Qrcode(
+            'reader'
+          );
+
+
+        await scanner.start(
+
+
+          {
+            facingMode:
+              'environment'
+          },
+
+
+          {
+
+            fps: 10,
+
+            qrbox: {
+
+              width: 250,
+
+              height: 250
+
+            }
+
+          },
+
+
+          onScan,
+
+
+          () => {}
+
+        );
+
+
+        started = true;
+
+
+        document
+          .getElementById(
+            'start'
+          )
+          .style.display =
+          'none';
+
+
+        showStatus(
+
+          `提出物${selectedType}を選択中
+QRを読み取ってください。`,
+
+          ''
+
+        );
+
+
+      }
+
+
+      catch (error) {
+
+
+        showStatus(
+
+          `❌ カメラを起動できません。
+${error}`,
+
+          'error'
+
+        );
+
+
+      }
+
+
+    }
+  );
+
+
+// ==================================================
+// QR読み取り
+// ==================================================
+
+async function onScan(
+  decodedText
+) {
+
+
+  const now =
+    Date.now();
+
+
+  if (locked) {
+
+    return;
+
+  }
+
+
+  // カメラが同じQRを連続して
+  // 認識するのを防止
+  if (
+
+    decodedText === lastCode
+
+    &&
+
+    now - lastTime < 3000
+
+  ) {
+
+    return;
+
+  }
+
+
+  locked = true;
+
+  lastCode =
+    decodedText;
+
+  lastTime =
+    now;
+
+
+  showStatus(
+
+    '登録中…',
+
+    ''
+
+  );
+
+
+  try {
+
+
+    const apiKey =
+      localStorage.getItem(
+        'qrApiKey'
+      );
+
+
+    const response =
+      await fetch(
+
+        GAS_URL,
+
+        {
+
+          method: 'POST',
+
+          redirect: 'follow',
+
+          // application/json にすると
+          // CORSのpreflightが起こりやすいため
+          // text/plainでJSON文字列を送る
+          headers: {
+
+            'Content-Type':
+              'text/plain;charset=utf-8'
+
+          },
+
+          body:
+            JSON.stringify({
+
+              studentId:
+                decodedText,
+
+              submissionType:
+                selectedType,
+
+              apiKey:
+                apiKey
+
+            })
+
+        }
+
+      );
+
+
+    const result =
+      await response.json();
+
+
+    // ---------- 成功 ----------
+
+    if (result.ok) {
+
+
+      showStatus(
+
+        `✅ ${result.name}さん
+${result.className} ${result.number}番
+提出物${result.submissionType}
+今回で ${result.count}回目`,
+
+        'ok'
+
+      );
+
+
+      if (navigator.vibrate) {
+
+        navigator.vibrate(80);
+
+      }
+
+    }
+
+
+    // ---------- 重複 ----------
+
+    else if (
+      result.duplicate
+    ) {
+
+
+      showStatus(
+
+        `⚠️ ${result.name}さん
+今日は提出物${result.submissionType}を
+すでに登録済みです。`,
+
+        'warn'
+
+      );
+
+
+      if (navigator.vibrate) {
+
+        navigator.vibrate(
+          [60, 50, 60]
+        );
+
+      }
+
+    }
+
+
+    // ---------- 管理キー不一致 ----------
+
+    else if (
+      result.unauthorized
+    ) {
+
+
+      localStorage.removeItem(
+        'qrApiKey'
+      );
+
+
+      alert(
+        '管理キーが違います。もう一度入力してください。'
+      );
+
+
+      location.reload();
+
+      return;
+
+    }
+
+
+    // ---------- その他エラー ----------
+
+    else {
+
+
+      showStatus(
+
+        `❌ ${result.message}`,
+
+        'error'
+
+      );
+
+    }
+
+
+  }
+
+
+  catch (error) {
+
+
+    console.error(error);
+
+
+    showStatus(
+
+      `❌ 通信エラー
+${error}`,
+
+      'error'
+
+    );
+
+
+  }
+
+
+  // 約1秒後に
+  // 次の生徒を読める
+  setTimeout(
+    () => {
+
+      locked = false;
+
+    },
+
+    1000
+  );
+
+
+}
+
+
+// ==================================================
+// 結果表示
+// ==================================================
+
+function showStatus(
+  text,
+  type
+) {
+
+
+  const element =
+    document.getElementById(
+      'status'
+    );
+
+
+  element.textContent =
+    text;
+
+
+  element.className =
+    type || '';
+
+}
+
+
+</script>
+
+
+</body>
+
+</html>
