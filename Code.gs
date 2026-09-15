@@ -48,7 +48,8 @@ function doPost(e) {
     return jsonResponse(
       registerSubmission(
         data.studentId,
-        data.submissionType
+        data.submissionType,
+        data.className
       )
     );
 
@@ -151,7 +152,8 @@ function startSession(className, submissionType, sessionId) {
 
 function registerSubmission(
   studentId,
-  submissionType
+  submissionType,
+  expectedClassName
 ) {
 
   studentId =
@@ -284,6 +286,16 @@ function registerSubmission(
     const className = student[1];
     const number = student[2];
     const name = student[3];
+
+    if (
+      expectedClassName &&
+      String(className).trim() !== String(expectedClassName).trim()
+    ) {
+      return {
+        ok: false,
+        message: `${className}の児童です。選択したクラスを確認してください。`
+      };
+    }
 
 
     const summary =
