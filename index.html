@@ -349,6 +349,8 @@ let isLateSubmission = false;
 let scanner = null;
 
 let started = false;
+let starting = false;
+let blockedLateCode = '';
 
 let locked = false;
 
@@ -499,6 +501,8 @@ document
         'click',
         () => {
 
+          if (starting || locked) return;
+          blockedLateCode = '';
           document
             .querySelectorAll(
               '#submissionTypes .type'
@@ -545,6 +549,8 @@ document
       button.addEventListener(
         'click',
         () => {
+          if (starting || locked) return;
+          blockedLateCode = '';
           document.querySelectorAll('.class').forEach(
             b => b.classList.remove('active')
           );
@@ -565,7 +571,9 @@ document
   .addEventListener(
     'click',
     () => {
+      if (starting || locked) return;
       isLateSubmission = !isLateSubmission;
+      blockedLateCode = '';
 
       document
         .getElementById('lateToggle')
@@ -587,9 +595,10 @@ document
     'click',
     async () => {
 
-      if (started) {
+      if (started || starting) {
         return;
       }
+      starting = true;
 
       try {
 
@@ -604,33 +613,6 @@ document
         const apiKey =
           localStorage.getItem('qrApiKey');
 
-        const startResponse =
-          await fetch(
-            GAS_URL,
-            {
-              method: 'POST',
-              redirect: 'follow',
-              headers: {
-                'Content-Type': 'text/plain;charset=utf-8'
-              },
-              body: JSON.stringify({
-                action: 'startSession',
-                className: selectedClass,
-                submissionType: selectedType,
-                sessionId: sessionId,
-                apiKey: apiKey
-              })
-            }
-          );
-
-        const startResult =
-          await startResponse.json();
-
-        if (!startResult.ok) {
-          throw new Error(
-            startResult.message || '受付を開始できません。'
-          );
-        }
 
         scanner =
           new Html5Qrcode(
@@ -659,6 +641,35 @@ document
 
         );
 
+        if (!isLateSubmission) {
+        const startResponse =
+          await fetch(
+            GAS_URL,
+            {
+              method: 'POST',
+              redirect: 'follow',
+              headers: {
+                'Content-Type': 'text/plain;charset=utf-8'
+              },
+              body: JSON.stringify({
+                action: 'startSession',
+                className: selectedClass,
+                submissionType: selectedType,
+                sessionId: sessionId,
+                apiKey: apiKey
+              })
+            }
+          );
+
+        const startResult =
+          await startResponse.json();
+
+        if (!startResult.ok) {
+          throw new Error(
+            startResult.message || '受付を開始できません。'
+          );
+        }
+        }
         started = true;
 
         document
@@ -680,6 +691,7 @@ QRを読み取ってください。`,
       }
 
       catch (error) {
+        if (scanner) { try { await scanner.stop(); } catch (_) {} }
 
         showStatus(
 
@@ -691,6 +703,7 @@ ${error}`,
         );
 
       }
+      finally { starting = false; }
 
     }
   );
@@ -707,7 +720,7 @@ async function onScan(
   const now =
     Date.now();
 
-  if (locked) {
+  if (locked || !started || decodedText === blockedLateCode) {
     return;
   }
 
@@ -753,6 +766,29 @@ async function onScan(
         'qrApiKey'
       );
 
+    const scanClass = selectedClass;
+    const scanType = selectedType;
+    const scanLate = isLateSubmission;
+    if (scanLate) blockedLateCode = decodedText;
+    if (scanLate && !confirm(`${scanClass}・${TYPE_LABELS[scanType]}の遅れ提出を1回追加しますか？`)) {
+      locked = false;
+      return;
+    }
+    if (scanLate) {
+      isLateSubmission = false;
+      document.getElementById('lateToggle').textContent = '通常の提出（遅れて提出ではない）';
+    }
+    if (!scanLate) {
+      const sessionResponse = await fetch(GAS_URL, {
+        method: 'POST', redirect: 'follow',
+        headers: {'Content-Type': 'text/plain;charset=utf-8'},
+        body: JSON.stringify({action: 'startSession', className: scanClass,
+          submissionType: scanType, sessionId: `${scanClass}-${scanType}-${Date.now()}`, apiKey})
+      });
+      const sessionResult = await sessionResponse.json();
+      if (!sessionResult.ok) throw new Error(sessionResult.message || '受付を開始できません。');
+    }
+
 
     const response =
       await fetch(
@@ -779,16 +815,16 @@ async function onScan(
                 decodedText,
 
               className:
-                selectedClass,
+                scanClass,
 
               submissionType:
-                selectedType,
+                scanType,
 
               apiKey:
                 apiKey,
 
               isLateSubmission:
-                isLateSubmission
+                scanLate
 
             })
 
