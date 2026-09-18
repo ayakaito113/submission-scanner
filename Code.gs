@@ -125,15 +125,22 @@ function startSession(className, submissionType, sessionId) {
       sheet.appendRow(['タイムスタンプ', '日付', 'クラス', '提出物', '受付ID']);
     }
 
+    const now = new Date();
+    const tz = ss.getSpreadsheetTimeZone() || 'America/Los_Angeles';
+    const today = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+    if (!['3-1', '3-2'].includes(className)) {
+      return { ok: false, message: 'クラスを選択してください。' };
+    }
     const lastRow = sheet.getLastRow();
     if (lastRow >= 2) {
-      const ids = sheet.getRange(2, 5, lastRow - 1, 1).getValues();
-      if (ids.some(row => String(row[0]).trim() === sessionId)) {
+      const sessions = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+      if (sessions.some(row => String(row[4]).trim() === sessionId ||
+        (dateToKey(row[1], tz) === today && String(row[2]).trim() === className &&
+         String(row[3]).trim() === submissionType))) {
         return { ok: true, alreadyStarted: true };
       }
     }
 
-    const now = new Date();
     sheet.appendRow([now, now, className, submissionType, sessionId]);
     return { ok: true };
 
@@ -157,6 +164,8 @@ function registerSubmission(
   expectedClassName,
   isLateSubmission
 ) {
+
+  isLateSubmission = isLateSubmission === true;
 
   studentId =
     String(studentId || '').trim();
@@ -397,7 +406,7 @@ function registerSubmission(
       .setValues([
         [
           newCount,
-          todayKey
+          isLateSubmission ? summary[columns.lastDateIndex] : todayKey
         ]
       ]);
 
@@ -544,6 +553,16 @@ function dateToKey(
 // ==================================================
 
 function rebuildSummarySheet() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    return rebuildSummarySheetUnlocked();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function rebuildSummarySheetUnlocked() {
 
   const ss =
     SpreadsheetApp.getActiveSpreadsheet();
@@ -621,7 +640,7 @@ function rebuildSummarySheet() {
             2,
             1,
             logLastRow - 1,
-            6
+            7
           )
           .getValues()
       : [];
@@ -660,7 +679,7 @@ function rebuildSummarySheet() {
       );
 
     if (
-      dateKey &&
+      row[6] !== '遅れ提出' && dateKey &&
       (
         !item.lastDates[typeIndex] ||
         dateKey > item.lastDates[typeIndex]
@@ -699,6 +718,8 @@ function rebuildSummarySheet() {
 
     const item =
       summaryById[id];
+
+    if (!item) return;
 
     rows.push([
       row[0],
