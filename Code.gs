@@ -49,7 +49,8 @@ function doPost(e) {
       registerSubmission(
         data.studentId,
         data.submissionType,
-        data.className
+        data.className,
+        data.isLateSubmission
       )
     );
 
@@ -153,7 +154,8 @@ function startSession(className, submissionType, sessionId) {
 function registerSubmission(
   studentId,
   submissionType,
-  expectedClassName
+  expectedClassName,
+  isLateSubmission
 ) {
 
   studentId =
@@ -331,9 +333,9 @@ function registerSubmission(
       );
 
 
-    // 同じ日＋同じ生徒＋同じ提出物
-    // の二重登録を防ぐ
-    if (lastDate === todayKey) {
+    // 通常提出は同日重複を防ぐ。
+    // 「遅れて提出」を選んだ場合のみ追加登録を許可する。
+    if (lastDate === todayKey && !isLateSubmission) {
 
       return {
 
@@ -358,6 +360,11 @@ function registerSubmission(
     }
 
 
+    // 遅れて提出かどうかを履歴のG列に残す。
+    if (logSheet.getRange(1, 7).getValue() !== '提出区分') {
+      logSheet.getRange(1, 7).setValue('提出区分');
+    }
+
     // 正式な提出履歴は、従来どおり全件残す
     logSheet.appendRow([
 
@@ -366,7 +373,8 @@ function registerSubmission(
       id,
       name,
       className,
-      submissionType
+      submissionType,
+      isLateSubmission ? '遅れ提出' : '通常提出'
 
     ]);
 
