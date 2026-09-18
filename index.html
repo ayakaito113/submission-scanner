@@ -248,6 +248,10 @@
 
     </div>
 
+    <button class="secondary" id="lateToggle">
+      通常の提出（遅れて提出ではない）
+    </button>
+
   </div>
 
 
@@ -339,6 +343,8 @@ let selectedType = 'A';
 let selectedClass = '3-1';
 
 let sessionId = '';
+
+let isLateSubmission = false;
 
 let scanner = null;
 
@@ -551,6 +557,27 @@ document
 
 
 // ==================================================
+// 遅れて提出の切り替え
+// ==================================================
+
+document
+  .getElementById('lateToggle')
+  .addEventListener(
+    'click',
+    () => {
+      isLateSubmission = !isLateSubmission;
+
+      document
+        .getElementById('lateToggle')
+        .textContent =
+        isLateSubmission
+          ? '⚠️ 遅れて提出（同日に追加登録できます）'
+          : '通常の提出（遅れて提出ではない）';
+    }
+  );
+
+
+// ==================================================
 // カメラ起動
 // ==================================================
 
@@ -758,7 +785,10 @@ async function onScan(
                 selectedType,
 
               apiKey:
-                apiKey
+                apiKey,
+
+              isLateSubmission:
+                isLateSubmission
 
             })
 
