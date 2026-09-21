@@ -335,11 +335,12 @@ function registerSubmission(
         'yyyy-MM-dd'
       );
 
-    const lastDate =
-      dateToKey(
-        summary[columns.lastDateIndex],
-        tz
-      );
+    const lastDateCell = summarySheet.getRange(
+      summaryRow, columns.lastDateIndex + 1
+    );
+    const lastDate = summaryDateKey(
+      summary[columns.lastDateIndex], lastDateCell.getDisplayValue(), tz
+    );
 
 
     // 通常提出は同日重複を防ぐ。
@@ -396,6 +397,8 @@ function registerSubmission(
     const newCount =
       oldCount + 1;
 
+    // 日付キーは文字列として保存し、シートの自動日付変換を防ぐ。
+    lastDateCell.setNumberFormat('@');
     summarySheet
       .getRange(
         summaryRow,
@@ -406,7 +409,7 @@ function registerSubmission(
       .setValues([
         [
           newCount,
-          isLateSubmission ? summary[columns.lastDateIndex] : todayKey
+          isLateSubmission ? lastDate : todayKey
         ]
       ]);
 
@@ -441,7 +444,12 @@ function registerSubmission(
 
   finally {
 
-    lock.releaseLock();
+    // 次の読み取りを許可する前に集計表への書き込みを確定する。
+    try {
+      SpreadsheetApp.flush();
+    } finally {
+      lock.releaseLock();
+    }
 
   }
 
@@ -540,6 +548,16 @@ function dateToKey(
 
   return String(value || '').trim();
 
+}
+
+// 既存の「最終日」が日付セルになっていても、表示上の日付を優先する。
+// 通常の日時（提出履歴など）は従来どおりタイムゾーンで変換する。
+function summaryDateKey(value, displayedValue, timezone) {
+  const displayed = String(displayedValue || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(displayed)) return displayed;
+  const key = dateToKey(value, timezone);
+  if (!key || /^\d{4}-\d{2}-\d{2}$/.test(key)) return key;
+  throw new Error('児童集計の最終日を読み取れません。日付の表示形式を yyyy-mm-dd にしてください。');
 }
 
 
@@ -740,6 +758,13 @@ function rebuildSummarySheetUnlocked() {
 
 
   summarySheet.clearContents();
+
+  // 再集計後も最終日が日付セルへ自動変換されないようにする。
+  if (rows.length > 1) {
+    [6, 8, 10, 12].forEach(column => {
+      summarySheet.getRange(2, column, rows.length - 1, 1).setNumberFormat('@');
+    });
+  }
 
   summarySheet
     .getRange(
