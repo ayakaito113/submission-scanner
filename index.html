@@ -353,6 +353,7 @@ let starting = false;
 let blockedLateCode = '';
 
 let locked = false;
+let resultUncertain = false;
 
 let lastCode = '';
 
@@ -595,7 +596,7 @@ document
     'click',
     async () => {
 
-      if (started || starting) {
+      if (started || starting || resultUncertain) {
         return;
       }
       starting = true;
@@ -662,7 +663,7 @@ document
           );
 
         const startResult =
-          await startResponse.json();
+          await readApiResponse(startResponse, 'session');
 
         if (!startResult.ok) {
           throw new Error(
@@ -695,8 +696,9 @@ QRを読み取ってください。`,
 
         showStatus(
 
-          `❌ カメラを起動できません。
-${error}`,
+          `❌ 受付を開始できません。
+カメラの許可・通信・管理キーを確認してください。
+${error.message || '端末でエラーが発生しました。'}`,
 
           'error'
 
@@ -720,7 +722,7 @@ async function onScan(
   const now =
     Date.now();
 
-  if (locked || !started || decodedText === blockedLateCode) {
+  if (locked || resultUncertain || !started || decodedText === blockedLateCode) {
     return;
   }
 
@@ -759,6 +761,7 @@ async function onScan(
   );
 
 
+  let submissionAttempted = false;
   try {
 
     const apiKey =
@@ -785,11 +788,13 @@ async function onScan(
         body: JSON.stringify({action: 'startSession', className: scanClass,
           submissionType: scanType, sessionId: `${scanClass}-${scanType}-${Date.now()}`, apiKey})
       });
-      const sessionResult = await sessionResponse.json();
+      const sessionResult = await readApiResponse(sessionResponse, 'session');
       if (!sessionResult.ok) throw new Error(sessionResult.message || '受付を開始できません。');
     }
 
 
+    // これ以降の受信失敗は「未登録」とは断定できない。
+    submissionAttempted = true;
     const response =
       await fetch(
 
@@ -834,7 +839,7 @@ async function onScan(
 
 
     const result =
-      await response.json();
+      await readApiResponse(response, 'submission');
 
 
     // ==================================================
@@ -860,11 +865,7 @@ ${label}
       );
 
 
-      if (navigator.vibrate) {
-
-        navigator.vibrate(80);
-
-      }
+      safeVibrate(80);
 
     }
 
@@ -893,13 +894,7 @@ ${label}
       );
 
 
-      if (navigator.vibrate) {
-
-        navigator.vibrate(
-          [60, 50, 60]
-        );
-
-      }
+      safeVibrate([60, 50, 60]);
 
     }
 
@@ -948,16 +943,18 @@ ${label}
 
   catch (error) {
 
-    console.error(error);
-
+    // 応答本文・管理キー・児童情報をログへ出さない。
+    resultUncertain = true;
+    started = false;
+    document.getElementById('start').style.display = 'none';
     showStatus(
-
-      `❌ 通信エラー
-${error}`,
-
-      'error'
-
+      submissionAttempted
+        ? '⚠️ 登録結果を確認できません。\nスプレッドシートには登録済みの可能性があります。\n重複を防ぐため読み取りを停止しました。\n提出履歴を確認し、登録済みなら送り直さないでください。\n確認後、ページを再読み込みして再開してください。'
+        : '⚠️ 受付を確認できないため読み取りを停止しました。\n今回の児童の提出データは送っていません。\n通信・管理キーを確認してからページを再読み込みしてください。',
+      'warn'
     );
+    if (scanner) { try { await scanner.stop(); } catch (_) {} }
+    return;
 
   }
 
@@ -975,6 +972,37 @@ ${error}`,
 
 }
 
+
+// GAS以外のエラーページや空の返事を、登録結果として扱わない。
+async function readApiResponse(response, kind) {
+  if (!response.ok) throw new Error('サーバーから正常な返事を受け取れませんでした。');
+  const body = await response.text();
+  let result;
+  try {
+    result = JSON.parse(body.replace(/^\uFEFF/, '').trim());
+  } catch (_) {
+    throw new Error('サーバーの返事を読み取れませんでした。');
+  }
+  if (!result || typeof result !== 'object' || Array.isArray(result) ||
+      typeof result.ok !== 'boolean') {
+    throw new Error('サーバーの返事が想定した形式ではありません。');
+  }
+  if (kind === 'submission' && (result.ok || result.duplicate)) {
+    if (typeof result.name !== 'string' || !TYPE_LABELS[result.submissionType] ||
+        (result.ok && (typeof result.className !== 'string' ||
+          !Number.isFinite(result.count) || result.count < 1 || result.number == null))) {
+      throw new Error('登録結果の情報が不足しています。');
+    }
+  }
+  return result;
+}
+
+// 振動の非対応・端末側エラーで登録成功の表示を上書きしない。
+function safeVibrate(pattern) {
+  try {
+    if (typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
+  } catch (_) {}
+}
 
 // ==================================================
 // 結果表示
