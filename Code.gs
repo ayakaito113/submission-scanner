@@ -38,6 +38,13 @@ function doPost(e) {
     }
 
 
+    if (data.action === 'capabilities') {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const log = ss.getSheetByName(SHEET_LOG);
+      return jsonResponse({ok: true, scoringVersion: 1,
+        scoringReady: !!(log && log.getRange(1, 8).getValue() === '完成度点数' &&
+          ss.getSheetByName('3-1 完成度集計') && ss.getSheetByName('3-2 完成度集計'))});
+    }
     if (data.action === 'startSession') {
       return jsonResponse(
         startSession(data.className, data.submissionType, data.sessionId)
@@ -50,7 +57,8 @@ function doPost(e) {
         data.studentId,
         data.submissionType,
         data.className,
-        data.isLateSubmission
+        data.isLateSubmission,
+        data.score
       )
     );
 
@@ -162,10 +170,14 @@ function registerSubmission(
   studentId,
   submissionType,
   expectedClassName,
-  isLateSubmission
+  isLateSubmission,
+  score
 ) {
 
   isLateSubmission = isLateSubmission === true;
+  // 旧画面は未評価として保存。新画面では1〜3を必須にする。
+  if (score !== undefined && ![1, 2, 3].includes(score))
+    return {ok: false, message: '完成度は優秀3点・普通2点・不備あり1点から選んでください。'};
 
   studentId =
     String(studentId || '').trim();
@@ -248,6 +260,8 @@ function registerSubmission(
     }
 
 
+    if (score !== undefined && logSheet.getRange(1, 8).getValue() !== '完成度点数')
+      return {ok: false, message: '先に「児童管理 → 完成度集計を準備」を実行してください。'};
     const rosterRow =
       findStudentRow(
         rosterSheet,
@@ -384,7 +398,8 @@ function registerSubmission(
       name,
       className,
       submissionType,
-      isLateSubmission ? '遅れ提出' : '通常提出'
+      isLateSubmission ? '遅れ提出' : '通常提出',
+      score === undefined ? '' : score
 
     ]);
 
@@ -430,6 +445,7 @@ function registerSubmission(
         submissionType,
 
       count: newCount,
+      score: score === undefined ? null : score,
 
       date:
         Utilities.formatDate(
@@ -786,7 +802,129 @@ function rebuildSummarySheetUnlocked() {
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('児童管理')
     .addItem('転入生を追加', 'showTransferStudentPrompt')
+    .addItem('完成度集計を準備', 'prepareCompletionScoring')
+    .addItem('選択した提出履歴の評価を訂正', 'correctCompletionScore')
     .addToUi();
+}
+
+// 完成度シートだけを新規作成する。既存の名簿・回数・履歴は作り直さない。
+function prepareCompletionScoring() {
+  const ui = SpreadsheetApp.getUi();
+  try {
+    prepareCompletionScoring_();
+    ui.alert('準備できました。過去の提出は未評価のままです。完成度集計は自動更新されます。');
+  } catch (error) {
+    ui.alert('準備できませんでした：' + String(error.message || error));
+  }
+}
+
+function prepareCompletionScoring_() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const log = ss.getSheetByName(SHEET_LOG);
+    if (!log || !ss.getSheetByName(SHEET_ROSTER)) throw new Error('名簿と提出履歴を確認してください。');
+    const header = log.getRange(1, 8).getValue();
+    if (header !== '' && header !== '完成度点数') throw new Error('提出履歴のH列に別の項目があります。上書きせず停止しました。');
+    if (!header && log.getLastRow() > 1 &&
+        log.getRange(2, 8, log.getLastRow() - 1, 1).getValues().some(r => r[0] !== ''))
+      throw new Error('提出履歴のH列に既存データがあります。上書きせず停止しました。');
+    const marker = 'submission-scanner:completion-v1';
+    for (const cls of ['3-1', '3-2']) {
+      const sheet = ss.getSheetByName(cls + ' 完成度集計');
+      if (sheet && sheet.getRange(1, 1).getNote() !== marker)
+        throw new Error(cls + ' 完成度集計がすでに存在します。既存シートを上書きせず停止しました。');
+    }
+    const created = [];
+    try {
+      for (const cls of ['3-1', '3-2']) {
+        if (ss.getSheetByName(cls + ' 完成度集計')) continue;
+        const sheet = ss.insertSheet(cls + ' 完成度集計');
+        created.push(sheet);
+        sheet.getRange(1, 1, 1, 13).setValues([[
+          '生徒ID', '出席番号', '氏名', '視写 平均', '音読 平均', 'ぴったり 平均', '算数ドリル 平均',
+          '国語 合計点', '国語 評価件数', '国語 平均点', '算数 合計点', '算数 評価件数', '算数 平均点'
+        ]]);
+        sheet.getRange(1, 1).setNote(marker);
+        sheet.getRange(1, 4, 1, 10).setNote('自動集計です。直接入力しないでください。未評価は除外し、平均は評価済みの提出1回ごとに計算します。');
+        sheet.getRange(2, 1).setFormula(
+          '=IFERROR(FILTER({\'QR用名簿\'!A2:A,\'QR用名簿\'!C2:C,\'QR用名簿\'!D2:D},\'QR用名簿\'!B2:B="' +
+          cls + '",\'QR用名簿\'!A2:A<>""),"")');
+        const specs = [['A',4],['B',4],['C',4],['D',4],['ABC',2],['ABC',3],['ABC',4],['D',2],['D',3],['D',4]];
+        specs.forEach((spec, i) => sheet.getRange(2, i + 4).setFormula(completionFormula_(spec[0], spec[1])));
+        sheet.setFrozenRows(1);
+        sheet.getRange(1, 1, 1, 13).setBackground('#e8f0fe').setFontWeight('bold').setWrap(true);
+        sheet.setColumnWidth(3, 180);
+        sheet.setColumnWidths(4, 10, 115);
+        const rows = sheet.getMaxRows() - 1;
+        sheet.getRange(2, 4, rows, 4).setNumberFormat('0.00');
+        [10,13].forEach(col => sheet.getRange(2, col, rows).setNumberFormat('0.00'));
+      }
+      log.getRange(1, 8).setValue('完成度点数');
+      log.getRange(1, 8).setNote('優秀=3、普通=2、不備あり=1。空欄は未評価。訂正はこの行を選択して児童管理メニューから行ってください。');
+      SpreadsheetApp.flush();
+    } catch (error) {
+      // この実行で作った未完成シートのみ取り消し、既存シートは残す。
+      for (const sheet of created) { try { ss.deleteSheet(sheet); } catch (_) {} }
+      throw error;
+    }
+  } finally { lock.releaseLock(); }
+}
+
+function completionFormula_(types, resultColumn) {
+  const condition = types.split('').map(type => "Col2 = '" + type + "'").join(' or ');
+  // H列を数値に統一。空欄・非数値は0になり、1〜3の集計から除外される。
+  const query = 'QUERY({\'提出履歴\'!C2:C,\'提出履歴\'!F2:F,IFERROR(1*\'提出履歴\'!H2:H,0)},' +
+    '"select Col1,sum(Col3),count(Col3),avg(Col3) where (Col3 = 1 or Col3 = 2 or Col3 = 3) and (' +
+    condition + ') group by Col1 label sum(Col3) \'\',count(Col3) \'\',avg(Col3) \'\'",0)';
+  return '=ARRAYFORMULA(IF(A2:A="","",IFERROR(VLOOKUP(A2:A,' + query + ',' +
+    resultColumn + ',FALSE),' + (resultColumn === 4 ? '""' : '0') + ')))';
+}
+
+// 押し間違いの訂正専用。提出回数や提出機会は追加しない。
+function correctCompletionScore() {
+  const ui = SpreadsheetApp.getUi(), ss = SpreadsheetApp.getActiveSpreadsheet();
+  const selection = ss.getActiveRange();
+  if (!selection || selection.getSheet().getName() !== SHEET_LOG ||
+      selection.getRow() < 2 || selection.getNumRows() !== 1) {
+    ui.alert('「提出履歴」で訂正する児童の行を1行だけ選択してください。'); return;
+  }
+  const sheet = selection.getSheet(), row = selection.getRow();
+  const values = sheet.getRange(row, 1, 1, 8).getValues()[0];
+  if (!values[2] || !VALID_TYPES.includes(values[5])) { ui.alert('提出記録のある行を選んでください。'); return; }
+  const snapshot = JSON.stringify(values);
+  const reply = ui.prompt('評価の訂正',
+    sheet.getRange(row, 1).getDisplayValue() + '\n' + values[3] + 'さん / 提出物' + values[5] +
+    '\n現在：' + (values[7] || '未評価') + '\n訂正後の点数を入力（優秀3・普通2・不備あり1）', ui.ButtonSet.OK_CANCEL);
+  if (reply.getSelectedButton() !== ui.Button.OK) return;
+  const input = reply.getResponseText().normalize('NFKC').trim();
+  if (!/^[123]$/.test(input)) { ui.alert('1、2、3のいずれかを入力してください。'); return; }
+  if (ui.alert('訂正の確認', values[3] + 'さんの評価を' + input + '点に訂正します。提出回数は増えません。',
+      ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+  try {
+    updateCompletionScore_(row, snapshot, Number(input));
+    ui.alert('評価を訂正しました。完成度集計も自動で更新されます。');
+  } catch (error) { ui.alert('訂正できませんでした：' + String(error.message || error)); }
+}
+
+function updateCompletionScore_(row, snapshot, score) {
+  if (!Number.isInteger(row) || row < 2 || ![1,2,3].includes(score)) throw new Error('行または点数が不正です。');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet(), sheet = ss.getSheetByName(SHEET_LOG);
+    if (!sheet || sheet.getRange(1, 8).getValue() !== '完成度点数') throw new Error('完成度集計を準備してください。');
+    const values = sheet.getRange(row, 1, 1, 8).getValues()[0];
+    if (JSON.stringify(values) !== snapshot || !values[2] || !VALID_TYPES.includes(values[5]))
+      throw new Error('確認中に記録が変更されました。選び直してください。');
+    const cell = sheet.getRange(row, 8);
+    const note = cell.getNote();
+    cell.setNote(note + '\n' + Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), 'yyyy-MM-dd HH:mm:ss') +
+      ' 訂正：' + (values[7] || '未評価') + ' → ' + score);
+    cell.setValue(score);
+    SpreadsheetApp.flush();
+  } finally { lock.releaseLock(); }
 }
 
 function showTransferStudentPrompt() {
