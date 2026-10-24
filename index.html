@@ -144,6 +144,9 @@
     .hidden {
       display: none;
     }
+    .ratings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    #fixScore { width: auto; margin: 0 8px 0 0; }
+    #scoreHint { margin: 10px 0; font-weight: bold; color: #174ea6; }
 
   </style>
 
@@ -248,6 +251,15 @@
 
     </div>
 
+    <div style="font-weight:bold;margin:14px 0 10px;">完成度を選択</div>
+    <div class="ratings" id="ratings" role="group" aria-label="完成度">
+      <button class="type" data-score="3" aria-pressed="false">優秀<br>3点</button>
+      <button class="type" data-score="2" aria-pressed="false">普通<br>2点</button>
+      <button class="type" data-score="1" aria-pressed="false">不備あり<br>1点</button>
+    </div>
+    <p id="scoreHint" aria-live="polite">完成度を選んでからQRを読んでください。</p>
+    <label><input id="fixScore" type="checkbox">評価を固定して続けて読む</label>
+    <p style="font-size:13px;">通常は1人読むごとに評価が未選択に戻ります。</p>
     <button class="secondary" id="lateToggle">
       通常の提出（遅れて提出ではない）
     </button>
@@ -341,6 +353,35 @@ const TYPE_LABELS = {
 let selectedType = 'A';
 
 let selectedClass = '3-1';
+let selectedScore = null;
+const SCORE_LABELS = {3: '優秀', 2: '普通', 1: '不備あり'};
+
+function renderScore() {
+  document.querySelectorAll('#ratings button').forEach(button => {
+    const active = Number(button.dataset.score) === selectedScore;
+    button.classList[active ? 'add' : 'remove']('active');
+    button.setAttribute('aria-pressed', String(active));
+  });
+  document.getElementById('scoreHint').textContent = selectedScore
+    ? SCORE_LABELS[selectedScore] + '：' + selectedScore + '点' +
+      (document.getElementById('fixScore').checked ? '（固定中）' : '（次の1人）')
+    : '完成度を選んでからQRを読んでください。';
+}
+function clearScoreContext() {
+  selectedScore = null;
+  document.getElementById('fixScore').checked = false;
+  renderScore();
+}
+document.querySelectorAll('#ratings button').forEach(button => {
+  button.addEventListener('click', () => {
+    if (starting || locked || resultUncertain) return;
+    selectedScore = Number(button.dataset.score);
+    renderScore();
+  });
+});
+document.getElementById('fixScore').addEventListener('change', () => {
+  renderScore();
+});
 
 let sessionId = '';
 
@@ -503,6 +544,7 @@ document
         () => {
 
           if (starting || locked) return;
+          clearScoreContext();
           blockedLateCode = '';
           document
             .querySelectorAll(
@@ -551,6 +593,7 @@ document
         'click',
         () => {
           if (starting || locked) return;
+          clearScoreContext();
           blockedLateCode = '';
           document.querySelectorAll('.class').forEach(
             b => b.classList.remove('active')
@@ -614,6 +657,14 @@ document
         const apiKey =
           localStorage.getItem('qrApiKey');
 
+        const capabilityResponse = await fetch(GAS_URL, {
+          method: 'POST', redirect: 'follow',
+          headers: {'Content-Type': 'text/plain;charset=utf-8'},
+          body: JSON.stringify({action: 'capabilities', apiKey})
+        });
+        const capability = await readApiResponse(capabilityResponse, 'capabilities');
+        if (!capability.ok || capability.scoringVersion !== 1 || !capability.scoringReady)
+          throw new Error('GASの更新・新バージョンのデプロイと「完成度集計を準備」を完了してください。');
 
         scanner =
           new Html5Qrcode(
@@ -722,7 +773,7 @@ async function onScan(
   const now =
     Date.now();
 
-  if (locked || resultUncertain || !started || decodedText === blockedLateCode) {
+  if (locked || resultUncertain || !started || !selectedScore || decodedText === blockedLateCode) {
     return;
   }
 
@@ -772,6 +823,11 @@ async function onScan(
     const scanClass = selectedClass;
     const scanType = selectedType;
     const scanLate = isLateSubmission;
+    const scanScore = selectedScore;
+    if (!document.getElementById('fixScore').checked) {
+      selectedScore = null;
+      renderScore();
+    }
     if (scanLate) blockedLateCode = decodedText;
     if (scanLate && !confirm(`${scanClass}・${TYPE_LABELS[scanType]}の遅れ提出を1回追加しますか？`)) {
       locked = false;
@@ -829,7 +885,8 @@ async function onScan(
                 apiKey,
 
               isLateSubmission:
-                scanLate
+                scanLate,
+              score: scanScore
 
             })
 
@@ -858,6 +915,7 @@ async function onScan(
         `✅ ${result.name}さん
 ${result.className} ${result.number}番
 ${label}
+完成度：${SCORE_LABELS[result.score]}（${result.score}点）
 今回で ${result.count}回目`,
 
         'ok'
@@ -990,7 +1048,8 @@ async function readApiResponse(response, kind) {
   if (kind === 'submission' && (result.ok || result.duplicate)) {
     if (typeof result.name !== 'string' || !TYPE_LABELS[result.submissionType] ||
         (result.ok && (typeof result.className !== 'string' ||
-          !Number.isFinite(result.count) || result.count < 1 || result.number == null))) {
+          !Number.isFinite(result.count) || result.count < 1 || result.number == null ||
+          ![1,2,3].includes(result.score)))) {
       throw new Error('登録結果の情報が不足しています。');
     }
   }
